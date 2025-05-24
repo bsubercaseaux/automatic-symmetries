@@ -3,89 +3,84 @@ from itertools import combinations
 from pysat.card import *
 import itertools
 
-
 class CC_system:
     rot = 1
     encode_id = 1
-    orients = {}
     n = 0
-    point_to_id = {}
-    id_to_point = {}
-    label_to_class = {}
-    class_to_label = {}
+    triple_to_rep = {} ##Maps ordered point triples to a (class, representative, inversions) triple
+    class_to_rep = {}
     equiv_classes = []
+    orients = {}    ##Only tracks orientations of representatives
 
-    def __init__(self, rot=1, id=1):
+    def __init__(self, n, rot=1, id=1):
+        assert n%rot == 0, "Total number of points not divisible by rotation factor"
         self.rot = rot
         self.encode_id = id
+        self.n = n
 
-    def add_point(self, label):
-        ##Populate new points
-        new_points = [self.n + i for i in range(self.rot)]
-        self.label_to_class[label] = len(self.equiv_classes)
-        self.class_to_label[len(self.equiv_classes)] = label
-        for i in range(self.rot):
-            self.point_to_id[(self.label_to_class[label], i)] = new_points[i]
-            self.id_to_point[new_points[i]] = (self.label_to_class[label], i)
+        ##Initialize the orientation variables
+        for p, q, r in itertools.combinations(range(n), 3):
+            if (p, q, r) in self.triple_to_rep:
+                continue
+            current_class = set()
+            cur = (p, q, r)
+            while len(set(itertools.permutations(cur, 3)) & current_class) == 0:
+                current_class.add(cur)
+                c1, c2, c3 = cur
+                cur = (self.next(c1), self.next(c2), self.next(c3))
+            sorted_class = sorted([tuple(sorted(c)) for c in current_class])
+            self.equiv_classes.append(sorted_class)
+            rep = sorted_class[0]
+            self.orients[rep] = [self.encode_id, self.encode_id + 1, self.encode_id + 2]
+            self.encode_id += 3
+            self.class_to_rep[len(self.equiv_classes) - 1] = rep
 
-        ##Populate orients
-        for idx in range(self.rot):
-            p3 = (self.label_to_class[label], idx)
-            for i1, i2 in itertools.combinations(list(range(self.n)) + new_points[:idx], 2):
-                p1 = self.id_to_point[i1]
-                p2 = self.id_to_point[i2]
-                triple, inv = self.normalize((p1, p2, p3))
-                # print(f"Triple: {(p1, p2, p3)} Normalized: {triple} inv: {inv}")
-                if not triple in self.orients:
-                    # print("Unpopulated triple")
-                    self.orients[triple] = [self.encode_id, self.encode_id + 1, self.encode_id + 2]
-                    self.encode_id += 3
-                self.orients[(p1, p2, p3)] = [self.orients[triple][2 * inv], self.orients[triple][1],
-                                              self.orients[triple][2 * (1 - inv)]]
-        ##Update parameters
-        self.equiv_classes.append([(self.n, i) for i in range(self.rot)])
-        self.n += self.rot
+            ##Now populate triple_to_rep for every element of the orbit
+            ##First compute inversion of representative
+            rep_inv = -1
+            for perm in itertools.permutations(rep, 3):
+                if perm in current_class:
+                    rep_inv = self.parity(perm)
+                    break
+            assert rep_inv != -1, "Incorrect representative"
+            for triple in current_class:
+                sorted_triple = tuple(sorted(triple))
+                total_inv = (rep_inv + self.parity(triple)) % 2
+                self.triple_to_rep[sorted_triple] = (len(self.equiv_classes) - 1, rep, total_inv)
+    def parity(self, perm):
+        ##Auxiliary function to count parity of triple
+        return len([(u, v) for (u, v) in itertools.combinations(perm, 2) if u > v]) % 2
 
-    def normalize(self, triple):
-        ##Returns a normalized triple, along with a flag indicating if orientation has been flipped
-        ##Points are (class, rot) pairs
-        inv = len([(u, v) for u, v in itertools.combinations(triple, 2) if u[0] > v[0]])
-        p1, p2, p3 = sorted(triple, key=lambda x: x[0])
-        np1 = (p1[0], 0)
-        np2 = (p2[0], (p2[1] - p1[1]) % self.rot)
-        np3 = (p3[0], (p3[1] - p1[1]) % self.rot)
-        if np2 < np3:
-            return (np1, np2, np3), inv % 2
-        return (np1, np3, np2), (inv + 1) % 2
+    def next(self, point):
+        ##Returns the next point
+        equiv_class = point//self.rot
+        idx = point%self.rot
+        return equiv_class*self.rot + (idx + 1)%self.rot
+
+    def get_rep(self, triple):
+        ##returns the representative
+        return self.triple_to_rep[tuple(sorted(triple))][1]
 
     def get_orients(self, tri):
-        i1, i2, i3 = tri
-        p1 = self.id_to_point[i1]
-        p2 = self.id_to_point[i2]
-        p3 = self.id_to_point[i3]
-        triple, inv = self.normalize((p1, p2, p3))
-        if inv == 0:
-            return self.orients[triple]
+        equiv_class, rep, inv = self.triple_to_rep[tuple(sorted(tri))]
+        total_inv = (inv + self.parity(tri)) % 2
+        if total_inv == 0:
+            return self.orients[rep]
         else:
-            x, y, z = self.orients[triple]
+            x, y, z = self.orients[rep]
             return [z, y, x]
 
     def get_orient_lit(self, tri, ori):
         return self.get_orients(tri)[ori]
 
-    def encode_uniquess(self, cnf, id):
+    def encode_uniqueness(self, cnf, id):
         ##Encodes that every triple has exactly one orientation
-        for triple in self.orients:
-            if triple == self.normalize(triple)[0]:
-                id = append_eq(cnf, self.orients[triple], 1, id)
+        for cur in self.orients.values():
+            id = append_eq(cnf, cur, 1, id)
         return id
 
     def is_canonical(self, triple):
-        i1, i2, i3 = triple
-        p1 = self.id_to_point[i1]
-        p2 = self.id_to_point[i2]
-        p3 = self.id_to_point[i3]
-        return (p1, p2, p3) == self.normalize((p1, p2, p3))[0]
+        return triple == self.get_rep(triple)
 
 def append_eq(cnf, lits, k, id):
     ##Encodes sum x \in lits x = k
@@ -231,7 +226,7 @@ def encode_rot_sym(points, orients, rot, cnf):
     assert n % rot == 0, "Total number of points is not divisible by cycle of rotation."
     equiv_size = n // rot
     base = [i for i in range(equiv_size)]
-    print(base)
+    # print(base)
     for triple in itertools.combinations(base, 3):
         a, b, c = triple
         for i in range(1, 3):
@@ -448,7 +443,7 @@ def get_order_lit(p, q, ordering):
     return ordering[(p, q)] if p < q else -ordering[(q, p)]
 
 
-def encode_signotope_axioms(point_config: CC_system, cnf, id):
+def encode_signotope_axioms(point_config: CC_system, cnf, id, symmetry_breaking=True):
     ## Encodes signotope axioms on unsorted points by encoding
     ## an ordering on the points that respects the x-coordinates
     ## should only use O(n^4) clauses
@@ -463,32 +458,57 @@ def encode_signotope_axioms(point_config: CC_system, cnf, id):
     for lits in itertools.permutations(range(n), 3):
         monotone = []
         for i in range(2):
-            monotone.append(
-                -ordering[(lits[i], lits[i + 1])] if lits[i] < lits[i + 1] else ordering[(lits[i + 1], lits[i])])
-        cnf.append(monotone + [ordering[(lits[1], lits[2])] if lits[1] < lits[2] else -ordering[(lits[2], lits[1])]])
+            monotone.append(-get_order_lit(lits[i], lits[i + 1], ordering))
+        cnf.append(monotone + [get_order_lit(lits[0], lits[2], ordering)])
 
     ##Collinearity: Enforced for every set of 4 points (a, b, c, d) where a < b < c
     for triple in itertools.combinations(range(n), 3):
-        # if not point_config.is_canonical(triple):
-        #     continue
+        if not point_config.is_canonical(triple):
+            continue
         for p in range(n):
             if p in triple:
                 continue
             order_collinear_axiom((triple[0], triple[1], triple[2], p), point_config, ordering, cnf)
 
+    print(f"Clauses after encoding collinear axioms: {len(cnf.clauses)} ")
+
     ## Standard signotope axioms
     for p, q, r, s in itertools.permutations(range(n), 4):
         signotope_axioms = get_signotope_axiom((p, q, r, s), point_config)
-        pq = get_order_lit(p, q, ordering)
-        qr = get_order_lit(q, r, ordering)
-        rs = get_order_lit(r, s, ordering)
-        mont = [-pq, -qr, -rs]
-        for c in signotope_axioms:
-            cnf.append(mont + c)
+        pr = get_order_lit(p, r, ordering)
+        if q < r < s:
+            pq = get_order_lit(p, q, ordering)
+            ps = get_order_lit(p, s, ordering)
+            pref = [-pq, -pr, -ps]
+            cnf.append(pref + signotope_axioms[0])
+            cnf.append(pref + signotope_axioms[1])
+        if p < q:
+            qr = get_order_lit(q, r, ordering)
+            rs = get_order_lit(r, s, ordering)
+            pref = [-pr, -qr, -rs]
+            cnf.append(pref + signotope_axioms[2])
+            cnf.append(pref + signotope_axioms[3])
 
-    ##Enforce convex hull ordering
-    for lits in itertools.combinations(range(n), 4):
-        not_inside(lits, point_config, cnf)
+    print(f"Clauses after encoding transitive axioms: {len(cnf.clauses)} ")
+
+    ##Heuristic: No triples in the same orbit can be collinear
+    for i in range(n//point_config.rot):
+        cur = [i*point_config.rot + j for j in range(point_config.rot)]
+        for triple in itertools.combinations(cur, 3):
+            cnf.append([-point_config.get_orient_lit(triple, 1)])
+
+    ##Symmetry breaking
+    if symmetry_breaking:
+        ##Enforce convex hull ordering
+        for lits in itertools.combinations(range(n), 4):
+            not_inside(lits, point_config, cnf)
+        ##Relative ordering within each orbit, start at left-most
+        for i in range(n//point_config.rot):
+            for j in range(1, point_config.rot):
+                cnf.append([ordering[(i * point_config.rot, i * point_config.rot + j)]])
+        ##Orbits are arranged from left to right
+        for i in range(n//point_config.rot - 1):
+            cnf.append([ordering[(i * point_config.rot, (i + 1)*point_config.rot)]])
     return id
 
 
@@ -547,22 +567,22 @@ def encode_rot(n, orients, cycle, cnf):
 def encode(n, balance, rot=1):
     assert n % rot == 0, "Incompatible rotation"
     cnf = CNF()
-    point_config = CC_system(rot, 1)
-    for i in range(n // rot):
-        point_config.add_point(i)
+    point_config = CC_system(n, rot)
     print(f"Unique orientation variables: {point_config.encode_id - 1} Total points: {point_config.n}")
-    # print(point_config.orients)
 
-    ##Fixes
+    ##WLOG: I think this just enforces that the rotation is counter-clockwise?
     cnf.append([point_config.get_orient_lit((0, 1, 2), 2)])
 
     id = point_config.encode_id
-    id = point_config.encode_uniquess(cnf, id)
+    id = point_config.encode_uniqueness(cnf, id)
     id = encode_signotope_axioms(point_config, cnf, id)
 
+    print(f"Clauses after encoding CC axioms: {len(cnf.clauses)} ")
+
     for a, b in itertools.combinations(range(n), 2):
-        if point_config.id_to_point[a][1] == 0:
+        if a%rot == 0:
             id = encode_balance(a, b, point_config, balance, cnf, id)
+
     cnf.to_file(f"formulas/everywhere_unbalanced_{n}_{balance}_{rot}.cnf")
 
 

@@ -39,7 +39,7 @@ To generate an s-fold symmetric pointset with n points and an unbalance of k, ru
 python3 encoders/everywhere_unbalanced.py -n <n> -k <k> -s <s>
 ```
 
-For example, running `python3 encoders/everywhere_unbalanced.py -n 21 -k 2 -s 3` will encode the existence of a set of 15 points with an unbalance of 2 and a 3-fold symmetry, as depicted in the paper. The solver (https://github.com/arminbiere/kissat) can solve this instance in under a minute. In turn, the instance resulting from `python3 encoders/everywhere_unbalanced.py -n 21 -k 2 -s 1`, where no non-trivial symmetries are enforced (any pointset has a 1-fold symmetry), is much harder to solve.
+For example, running `python3 encoders/everywhere_unbalanced.py -n 21 -k 2 -s 3` will encode the existence of a set of 15 points with an unbalance of 2 and a 3-fold symmetry, as depicted in the paper. The solver (https://github.com/arminbiere/kissat) can solve this instance in about 10 seconds. In turn, the instance resulting from `python3 encoders/everywhere_unbalanced.py -n 21 -k 2 -s 1`, where no non-trivial symmetries are enforced (any pointset has a 1-fold symmetry), is much harder to solve. In terms of the minimality, running `python3 encoders/everywhere_unbalanced.py -n 11 -k 2 -s 1` will generate an instance which can be proved unsatisfiable in under a second, while `-n 13` takes under a minute, and `-n 15` takes about 20 minutes.
 
 
 
